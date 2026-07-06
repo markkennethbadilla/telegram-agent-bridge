@@ -40,9 +40,9 @@ async function reply(ctx: any, text: string) {
 
 bot.command("new", async (ctx) => {
   const [agent, ...dirParts] = (ctx.match as string).trim().split(/\s+/);
-  const dir = dirParts.join(" ");
+  const dir = dirParts.join(" ") || process.env.BRIDGE_DEFAULT_DIR || "";
   if (!agent || !dir || !agents[agent]) {
-    return reply(ctx, `Usage: /new <agent> <dir>\nAgents: ${Object.keys(agents).join(", ")}`);
+    return reply(ctx, `Usage: /new <agent> [dir] (default: ${process.env.BRIDGE_DEFAULT_DIR ?? "none set"})\nAgents: ${Object.keys(agents).join(", ")}`);
   }
   sessions.set(key(ctx), { agent, dir, busy: false });
   saveSessions(sessions);
