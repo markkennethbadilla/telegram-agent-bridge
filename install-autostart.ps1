@@ -53,6 +53,17 @@ if (-not `$alive) { Start-ScheduledTask -TaskName '$TaskName' }
 $watchPath = Join-Path $AppDir 'watchdog.ps1'
 Set-Content -Path $watchPath -Value $watch -Encoding UTF8
 
+# Windowless launcher for the watchdog (pwsh -WindowStyle Hidden STILL flashes a
+# console every 5 min; wscript Run(cmd,0,False) gives it no console at all).
+$watchCmd = "$q$psExe$q -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $q$watchPath$q"
+$watchCmdEsc = $watchCmd -replace $q, ($q + $q)
+$watchVbs = @"
+Set sh = CreateObject("WScript.Shell")
+sh.Run "$watchCmdEsc", 0, False
+"@
+$watchVbsPath = Join-Path $AppDir 'watchdog-hidden.vbs'
+Set-Content -Path $watchVbsPath -Value $watchVbs -Encoding ASCII
+
 # Shared settings: survive battery, no time limit, task-level restart on failure.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -67,8 +78,7 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigLogon, $trig5) -Settings $settings | Out-Null
 
 # ── watchdog task: every 5 min, revive the main task if the bridge process is gone ──
-$watchAction = New-ScheduledTaskAction -Execute $psExe `
-  -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $watchPath)
+$watchAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument ('"{0}"' -f $watchVbsPath)
 $watchTrig = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
   -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 Unregister-ScheduledTask -TaskName $WatchName -Confirm:$false -ErrorAction SilentlyContinue
