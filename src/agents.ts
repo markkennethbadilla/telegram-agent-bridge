@@ -18,7 +18,7 @@ export interface RunResult {
 // Windows: CLI agents install as .cmd/.exe shims that bare names don't resolve to
 function exe(name: string): string {
   const home = process.env.USERPROFILE ?? "";
-  const known = [`${home}\.local\bin\${name}.exe`, `${home}\.bun\bin\${name}.exe`];
+  const known = [`${home}/.local/bin/${name}.exe`, `${home}/.bun/bin/${name}.exe`];
   return (
     Bun.which(name) ?? Bun.which(`${name}.cmd`) ?? Bun.which(`${name}.exe`) ??
     known.find((p) => existsSync(p)) ?? name
@@ -42,12 +42,17 @@ export const agents: Record<string, (msg: string, s: Session) => Promise<RunResu
     if (s.resumeId) cmd.push("--resume", s.resumeId);
     cmd.push(msg);
     const out = await run(cmd, s.dir);
-    try {
-      const j = JSON.parse(out);
-      return { text: j.result ?? out, resumeId: j.session_id ?? s.resumeId };
-    } catch {
-      return { text: out, resumeId: s.resumeId };
+    // claude may emit one JSON object or a stream of JSON lines; the result object wins
+    let best: any = null;
+    for (const line of out.split(/\r?\n/)) {
+      try {
+        const j = JSON.parse(line);
+        if (j && typeof j === "object") best = j.type === "result" || j.result !== undefined ? j : best ?? j;
+      } catch {}
     }
+    if (!best) try { best = JSON.parse(out); } catch {}
+    if (!best) return { text: out, resumeId: s.resumeId };
+    return { text: best.result ?? best.text ?? JSON.stringify(best).slice(0, 3000), resumeId: best.session_id ?? s.resumeId };
   },
 
   async opencode(msg, s) {
