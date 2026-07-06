@@ -175,4 +175,21 @@ bot.catch((e) => console.error("bot error:", e.error));
 process.on("unhandledRejection", (e) => { console.error("fatal:", e); process.exit(1); });
 process.on("uncaughtException", (e) => { console.error("fatal:", e); process.exit(1); });
 console.error("bridge up — long polling");
-bot.start({ onStart: (me) => console.error("polling as", me.username) });
+// Reconcile Telegram's /command menu with the handlers that actually exist above.
+// setMyCommands REPLACES the whole list, so this also purges stale commands (e.g. /status)
+// that were showing "not available". Keep this array in lockstep with bot.command(...).
+const MENU = [
+  { command: "new", description: "spawn a session: /new <agent> [dir]" },
+  { command: "ls", description: "list active sessions" },
+  { command: "model", description: "pick claude model: opus|sonnet|haiku" },
+  { command: "fresh", description: "reset the conversation (keep agent+dir)" },
+  { command: "end", description: "kill this session" },
+  { command: "start", description: "show help" },
+];
+
+bot.start({
+  onStart: async (me) => {
+    console.error("polling as", me.username);
+    try { await bot.api.setMyCommands(MENU); } catch (e) { console.error("setMyCommands failed:", e); }
+  },
+});
