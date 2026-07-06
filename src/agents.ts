@@ -63,6 +63,19 @@ export const agents: Record<string, (msg: string, s: Session) => Promise<RunResu
     return { text: out || "(no output)", resumeId: "continue" };
   },
 
+  async hermes(msg, s) {
+    // ponytail: -z is one-shot; per-topic continuity needs hermes session naming, add if used often
+    const out = await run(["hermes", "-z", msg], s.dir);
+    return { text: out || "(no output)" };
+  },
+
+  async agy(msg, s) {
+    // --continue resumes the most recent conversation: fine for one agy topic, racy for several
+    const cmd = ["agy", "--print", msg, "--dangerously-skip-permissions", ...(s.resumeId ? ["--continue"] : [])];
+    const out = await run(cmd, s.dir);
+    return { text: out || "(no output)", resumeId: "continue" };
+  },
+
   async shell(msg, s) {
     const out = await run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", msg], s.dir);
     return { text: out || "(no output)" };
