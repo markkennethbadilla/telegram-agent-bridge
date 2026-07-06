@@ -6,8 +6,23 @@
 #   2. TelegramAgentBridge task - runs the loop windowless (via wscript) at logon + every 5 min.
 #   3. TelegramAgentBridgeWatchdog task - every 5 min, if no bun bot.ts process is alive,
 #      (re)starts layer 2. Kill the loop AND the task and this still revives everything.
-# Single-instance is safe: bot.ts holds a 127.0.0.1 port lock, so a duplicate start exits 0.
+# Single-instance: the loop holds a named mutex (below) so only one loop runs; bot.ts also
+# holds a 127.0.0.1 port lock as a second backstop. Both are needed - the port lock alone
+# has a sub-second startup race when two loops launch at once (at-logon + watchdog).
 $ErrorActionPreference = 'Stop'
+
+# Self-elevate: the main task uses an -AtLogOn trigger, which the scheduler rejects with
+# "Access is denied" when Register-ScheduledTask runs non-elevated (and a reprovision may
+# invoke this child unelevated). Inbox sudo is UAC-never-notify => silent. Mirrors
+# 03-agents-provisioning/steps/install_task_hidden_watcher.ps1.
+$isAdmin = ([Security.Principal.WindowsPrincipal]::new(
+             [Security.Principal.WindowsIdentity]::GetCurrent()
+           )).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+if (-not $isAdmin) {
+  $sudo = Get-Command sudo.exe -ErrorAction SilentlyContinue
+  if ($sudo) { & sudo.exe pwsh -NoProfile -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path @args; exit $LASTEXITCODE }
+  Write-Warning '[bridge] not elevated and sudo.exe missing - AtLogOn task registration may be denied'
+}
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TaskName = 'TelegramAgentBridge'
 $WatchName = 'TelegramAgentBridgeWatchdog'
@@ -24,6 +39,12 @@ if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\pow
 # --- layer 1: the crash-restart loop ---
 $loop = @"
 Set-Location '$Here'
+# Single-instance: at-logon + 5-min repetition + watchdog can each launch a loop, and
+# with several loops each retrying bot.ts every 10s the pollers perpetually 409-fight
+# and none survive. A named mutex is atomic; an abandoned one (prior loop crashed) is
+# caught and treated as acquired so we take over. Guarantees exactly one live loop.
+`$mtx = New-Object System.Threading.Mutex(`$false, 'Global\TelegramAgentBridgeLoop')
+try { if (-not `$mtx.WaitOne(0)) { exit 0 } } catch [System.Threading.AbandonedMutexException] { }
 while (`$true) {
   & '$bun' src/bot.ts 2>> "$AppDir\bridge.err.log"
   Start-Sleep -Seconds 10
