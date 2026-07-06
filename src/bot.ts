@@ -64,7 +64,8 @@ const COMMANDS: Cmd[] = [
   {
     name: "new", menu: "spawn a session: /new <agent> [dir]",
     run: (ctx, arg) => {
-      const [agent, ...dirParts] = arg.trim().split(/\s+/);
+      const [agentRaw, ...dirParts] = arg.trim().split(/\s+/);
+      const agent = (agentRaw ?? "").toLowerCase();  // agent names are case-insensitive
       const dir = dirParts.join(" ") || process.env.BRIDGE_DEFAULT_DIR || "";
       if (!agent || !dir || !agents[agent]) {
         return reply(ctx, `Usage: /new <agent> [dir] (default: ${process.env.BRIDGE_DEFAULT_DIR ?? "none set"})\nAgents: ${Object.keys(agents).join(", ")}`);
@@ -86,7 +87,7 @@ const COMMANDS: Cmd[] = [
     run: (ctx, arg) => {
       const s = sessions.get(key(ctx));
       if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
-      const name = arg.trim();
+      const name = arg.trim().toLowerCase();  // agent names are case-insensitive
       if (!name) return reply(ctx, `Current agent: ${s.agent}\nAgents: ${Object.keys(agents).join(", ")}`);
       if (!agents[name]) return reply(ctx, `Unknown agent "${name}". Agents: ${Object.keys(agents).join(", ")}`);
       s.agent = name; s.resumeId = undefined; saveSessions(sessions); // new agent -> fresh conversation
