@@ -65,7 +65,7 @@ export const agents: Record<string, (msg: string, s: Session) => Promise<RunResu
 
   async hermes(msg, s) {
     // ponytail: -z is one-shot; per-topic continuity needs hermes session naming, add if used often
-    const out = await run(["hermes", "-z", msg], s.dir);
+    const out = await run(["hermes", "-z", msg, "--dev"], s.dir); // --dev = plain stdout; default renderer prints nothing when piped
     return { text: out || "(no output)" };
   },
 

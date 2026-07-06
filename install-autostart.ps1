@@ -24,7 +24,13 @@ $psExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
 if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
 $action = New-ScheduledTaskAction -Execute $psExe `
   -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $loopPath)
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+# two triggers: at-logon (boot path) + hourly watchdog (revives a killed loop; the
+# loop script itself is single-instance-safe because Telegram rejects a second poller
+# and bot.ts exits, so a duplicate start converges to one live instance)
+$trigLogon = New-ScheduledTaskTrigger -AtLogOn
+$trigHourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
+    -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue)
+$trigger = @($trigLogon, $trigHourly)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
