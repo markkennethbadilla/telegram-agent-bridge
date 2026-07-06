@@ -1,0 +1,12 @@
+{
+  "name": "telegram-agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/bot.ts"
+  },
+  "dependencies": {
+    "grammy": "^1.30.0"
+  }
+}
