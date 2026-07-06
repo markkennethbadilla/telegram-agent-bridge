@@ -73,6 +73,18 @@ export const agents: Record<string, (msg: string, s: Session) => Promise<RunResu
     return { text: out || "(no output)" };
   },
 
+  async codex(msg, s) {
+    // codex exec = non-interactive mode (developers.openai.com/codex/noninteractive,
+    // verified 2026-07-06); resume via `codex exec resume --last` — same
+    // most-recent-conversation semantics (and same raciness caveat) as agy.
+    // --skip-git-repo-check: sessions may start in non-repo dirs.
+    const cmd = s.resumeId
+      ? ["codex", "exec", "resume", "--last", "--skip-git-repo-check", msg]
+      : ["codex", "exec", "--skip-git-repo-check", msg];
+    const out = await run(cmd, s.dir);
+    return { text: out || "(no output)", resumeId: "last" };
+  },
+
   async agy(msg, s) {
     // --continue resumes the most recent conversation: fine for one agy topic, racy for several
     const cmd = ["agy", "--print", msg, "--dangerously-skip-permissions", ...(s.resumeId ? ["--continue"] : [])];
