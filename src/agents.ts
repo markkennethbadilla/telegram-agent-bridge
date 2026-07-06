@@ -51,6 +51,7 @@ export const agents: Record<string, (msg: string, s: Session) => Promise<RunResu
       } catch {}
     }
     if (!best) try { best = JSON.parse(out); } catch {}
+    if (Array.isArray(best)) best = best.find((e: any) => e?.type === "result") ?? best[best.length - 1];
     if (!best) return { text: out, resumeId: s.resumeId };
     return { text: best.result ?? best.text ?? JSON.stringify(best).slice(0, 3000), resumeId: best.session_id ?? s.resumeId };
   },
