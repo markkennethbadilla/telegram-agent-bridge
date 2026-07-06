@@ -25,8 +25,12 @@ function exe(name: string): string {
   );
 }
 
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 10 * 60 * 1000);
+
 async function run(cmd: string[], dir: string): Promise<string> {
   const proc = spawn({ cmd: [exe(cmd[0]), ...cmd.slice(1)], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  const timer = setTimeout(() => proc.kill(), TURN_TIMEOUT_MS); // a hung agent must not wedge the session
+  proc.exited.finally(() => clearTimeout(timer));
   const [out, err] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

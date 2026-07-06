@@ -56,6 +56,14 @@ On an estate-provisioned machine, steps 2-5 are one command:
 - Known limits: the machine must be powered on and logged in; turns are end-of-turn replies
   (no streaming); one turn at a time per session.
 
+## Known agent-lane reliability
+- claude, agy, shell: solid, repeatedly E2E-proven.
+- opencode: wired, untested (not installed on the main box).
+- hermes: works but FLAKY under the scheduled-task environment - turns can hang
+  (observed 2026-07-06: -z run fine in a terminal, hung >8min under the task).
+  The bridge kills any turn after TURN_TIMEOUT_MS (default 10min) and replies with
+  an error, so a hung hermes can't wedge the session. Prefer claude/agy for real work.
+
 ## Troubleshooting
 - Bot silent → check ALLOWED_USER_IDS matches your numeric id (strangers are dropped silently by design).
 - "Still working" → one turn per session at a time; wait or /end and /new.
