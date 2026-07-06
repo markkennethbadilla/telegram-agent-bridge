@@ -250,7 +250,17 @@ bot.on([":photo", ":document"], async (ctx) => {
   }
 });
 
-bot.catch((e) => console.error("bot error:", e.error));
+bot.catch((e) => {
+  const err: any = e.error;
+  // 409 Conflict = another poller holds this token's getUpdates. A duplicate must DIE,
+  // not fight (two pollers livelock and neither drains updates). Exit 0 so the autostart
+  // loop's single-instance guards converge to exactly one live poller.
+  if (err && (err.error_code === 409 || String(err?.description ?? "").includes("Conflict"))) {
+    console.error("409 Conflict - another bridge instance is polling; exiting");
+    process.exit(0);
+  }
+  console.error("bot error:", err);
+});
 // any escaped failure -> exit nonzero so the autostart loop relaunches us clean
 process.on("unhandledRejection", (e) => { console.error("fatal:", e); process.exit(1); });
 process.on("uncaughtException", (e) => { console.error("fatal:", e); process.exit(1); });

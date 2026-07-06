@@ -105,5 +105,13 @@ $watchTrig = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
 Unregister-ScheduledTask -TaskName $WatchName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask -TaskName $WatchName -Action $watchAction -Trigger $watchTrig -Settings $settings | Out-Null
 
+# VERIFY the tasks actually registered before claiming success. Register-ScheduledTask
+# throws "Access is denied" on the -AtLogOn trigger when non-elevated; the old
+# unconditional success line then LIED that both registered. Fail loudly instead.
+$haveMain  = [bool](Get-ScheduledTask -TaskName $TaskName  -ErrorAction SilentlyContinue)
+$haveWatch = [bool](Get-ScheduledTask -TaskName $WatchName -ErrorAction SilentlyContinue)
+if (-not ($haveMain -and $haveWatch)) {
+  throw "[bridge] task registration FAILED (main=$haveMain watchdog=$haveWatch) - likely not elevated; re-run elevated"
+}
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "[bridge] '$TaskName' + '$WatchName' registered (windowless, at-logon, 5-min self-heal x2, started)"
