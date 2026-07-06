@@ -29,7 +29,7 @@ $action = New-ScheduledTaskAction -Execute $psExe `
 # and bot.ts exits, so a duplicate start converges to one live instance)
 $trigLogon = New-ScheduledTaskTrigger -AtLogOn
 $trigHourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
-    -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $trigger = @($trigLogon, $trigHourly)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
