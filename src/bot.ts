@@ -11,6 +11,15 @@ if (!token || allowed.length === 0) {
   process.exit(1);
 }
 
+// single-instance lock: two pollers on one bot token livelock getUpdates (409 fight,
+// neither consumes). A duplicate start must die instantly, not fight.
+try {
+  Bun.listen({ hostname: "127.0.0.1", port: Number(process.env.BRIDGE_LOCK_PORT ?? 48765), socket: { data() {} } });
+} catch {
+  console.error("another bridge instance holds the lock - exiting");
+  process.exit(0);
+}
+
 const sessions = loadSessions(); // key: `${chatId}:${threadId ?? 0}`
 const bot = new Bot(token);
 
@@ -86,4 +95,4 @@ bot.catch((e) => console.error("bot error:", e.error));
 process.on("unhandledRejection", (e) => { console.error("fatal:", e); process.exit(1); });
 process.on("uncaughtException", (e) => { console.error("fatal:", e); process.exit(1); });
 console.error("bridge up — long polling");
-bot.start();
+bot.start({ onStart: (me) => console.error("polling as", me.username) });
