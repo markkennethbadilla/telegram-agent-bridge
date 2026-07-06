@@ -82,5 +82,8 @@ bot.on("message:text", async (ctx) => {
 });
 
 bot.catch((e) => console.error("bot error:", e.error));
+// any escaped failure -> exit nonzero so the autostart loop relaunches us clean
+process.on("unhandledRejection", (e) => { console.error("fatal:", e); process.exit(1); });
+process.on("uncaughtException", (e) => { console.error("fatal:", e); process.exit(1); });
 console.error("bridge up — long polling");
 bot.start();
