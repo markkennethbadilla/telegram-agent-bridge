@@ -3,7 +3,7 @@
 import { Bot } from "grammy";
 import { agents, type Session } from "./agents";
 import { loadSessions, saveSessions } from "./store";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -54,48 +54,126 @@ async function reply(ctx: any, text: string) {
   }
 }
 
-bot.command("new", async (ctx) => {
-  const [agent, ...dirParts] = (ctx.match as string).trim().split(/\s+/);
-  const dir = dirParts.join(" ") || process.env.BRIDGE_DEFAULT_DIR || "";
-  if (!agent || !dir || !agents[agent]) {
-    return reply(ctx, `Usage: /new <agent> [dir] (default: ${process.env.BRIDGE_DEFAULT_DIR ?? "none set"})\nAgents: ${Object.keys(agents).join(", ")}`);
-  }
-  sessions.set(key(ctx), { agent, dir, busy: false });
-  saveSessions(sessions);
-  await reply(ctx, `Session ready: ${agent} @ ${dir}\nJust send messages now.`);
-});
+// ── Commands ──────────────────────────────────────────────────────────────────
+// ONE source of truth: this table drives both the /command router (below) and the
+// Telegram menu (setMyCommands in onStart), so the menu can never drift from what
+// actually works. Command matching is case-insensitive (/Fresh == /fresh).
+type Cmd = { name: string; menu: string; run: (ctx: any, arg: string) => Promise<any> | any };
 
-bot.command("ls", async (ctx) => {
-  const lines = [...sessions.entries()].map(([k, s]) => `${k} → ${s.agent} @ ${s.dir}${s.busy ? " (busy)" : ""}`);
-  await reply(ctx, lines.join("\n") || "No sessions. /new <agent> <dir>");
-});
+const COMMANDS: Cmd[] = [
+  {
+    name: "new", menu: "spawn a session: /new <agent> [dir]",
+    run: (ctx, arg) => {
+      const [agent, ...dirParts] = arg.trim().split(/\s+/);
+      const dir = dirParts.join(" ") || process.env.BRIDGE_DEFAULT_DIR || "";
+      if (!agent || !dir || !agents[agent]) {
+        return reply(ctx, `Usage: /new <agent> [dir] (default: ${process.env.BRIDGE_DEFAULT_DIR ?? "none set"})\nAgents: ${Object.keys(agents).join(", ")}`);
+      }
+      sessions.set(key(ctx), { agent, dir, busy: false });
+      saveSessions(sessions);
+      return reply(ctx, `Session ready: ${agent} @ ${dir}\nJust send messages now.`);
+    },
+  },
+  {
+    name: "ls", menu: "list active sessions",
+    run: (ctx) => {
+      const lines = [...sessions.entries()].map(([k, s]) => `${k} -> ${s.agent} @ ${s.dir}${s.busy ? " (busy)" : ""}`);
+      return reply(ctx, lines.join("\n") || "No sessions. /new <agent> <dir>");
+    },
+  },
+  {
+    name: "agent", menu: "switch agent, keep the dir: /agent <name>",
+    run: (ctx, arg) => {
+      const s = sessions.get(key(ctx));
+      if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
+      const name = arg.trim();
+      if (!name) return reply(ctx, `Current agent: ${s.agent}\nAgents: ${Object.keys(agents).join(", ")}`);
+      if (!agents[name]) return reply(ctx, `Unknown agent "${name}". Agents: ${Object.keys(agents).join(", ")}`);
+      s.agent = name; s.resumeId = undefined; saveSessions(sessions); // new agent -> fresh conversation
+      return reply(ctx, `Agent switched to ${name} (conversation reset, same dir).`);
+    },
+  },
+  {
+    name: "model", menu: "pick claude model: opus|sonnet|haiku",
+    run: (ctx, arg) => {
+      const s = sessions.get(key(ctx));
+      if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
+      if (!arg.trim()) return reply(ctx, `Current model: ${s.model ?? "default (account)"}\nUsage: /model opus | sonnet | haiku | <full-id>`);
+      s.model = arg.trim(); saveSessions(sessions);
+      return reply(ctx, `Model set to ${arg.trim()} (applies to the next message).`);
+    },
+  },
+  {
+    name: "pwd", menu: "show the session's working directory",
+    run: (ctx) => {
+      const s = sessions.get(key(ctx));
+      return reply(ctx, s ? `${s.agent} @ ${s.dir}` : "No session here.");
+    },
+  },
+  {
+    name: "cd", menu: "change working directory: /cd <dir>",
+    run: (ctx, arg) => {
+      const s = sessions.get(key(ctx));
+      if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
+      const dir = arg.trim();
+      if (!dir) return reply(ctx, `Current dir: ${s.dir}\nUsage: /cd <dir>`);
+      if (!existsSync(dir)) return reply(ctx, `No such directory: ${dir}`);
+      s.dir = dir; saveSessions(sessions);
+      return reply(ctx, `Working directory: ${dir}`);
+    },
+  },
+  {
+    name: "stop", menu: "stop the running turn (keep the session)",
+    run: (ctx) => {
+      const s = sessions.get(key(ctx));
+      if (!s?.proc) return reply(ctx, "Nothing running.");
+      try { s.proc.kill(); } catch {}
+      s.proc = undefined; s.busy = false;
+      return reply(ctx, "Stopped.");
+    },
+  },
+  {
+    name: "fresh", menu: "reset the conversation (keep agent+dir)",
+    run: (ctx) => {
+      const s = sessions.get(key(ctx));
+      if (s) { s.resumeId = undefined; saveSessions(sessions); }
+      return reply(ctx, s ? "Conversation reset (same agent/dir)." : "No session here.");
+    },
+  },
+  {
+    name: "end", menu: "kill this session",
+    run: (ctx) => {
+      const s = sessions.get(key(ctx));
+      if (s?.proc) { try { s.proc.kill(); } catch {} }
+      sessions.delete(key(ctx)); saveSessions(sessions);
+      return reply(ctx, "Session ended.");
+    },
+  },
+  {
+    name: "help", menu: "show this help",
+    run: (ctx) => reply(ctx, helpText()),
+  },
+];
 
-bot.command("end", async (ctx) => {
-  sessions.delete(key(ctx));
-  saveSessions(sessions);
-  await reply(ctx, "Session ended.");
-});
+const BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
+function helpText(): string {
+  return "CLI-agent bridge. Commands (case-insensitive):\n" +
+    COMMANDS.map((c) => `/${c.name} - ${c.menu}`).join("\n") +
+    "\n\nSend a photo/file to drop it in the agent's cwd; images the agent makes come back here.";
+}
 
-bot.command("fresh", async (ctx) => {
-  const s = sessions.get(key(ctx));
-  if (s) { s.resumeId = undefined; saveSessions(sessions); }
-  await reply(ctx, s ? "Conversation reset (same agent/dir)." : "No session here.");
+// Single case-insensitive command router: parses "/<cmd>[@bot] [args]", lowercases the
+// command, dispatches from the table. Unknown commands get a clear hint (never silent).
+bot.on("::bot_command", async (ctx) => {
+  const text = ctx.message?.text ?? ctx.channelPost?.text ?? "";
+  const m = text.match(/^\/([A-Za-z0-9_]+)(?:@\S+)?\s*([\s\S]*)$/);
+  if (!m) return;
+  const cmd = BY_NAME.get(m[1].toLowerCase());
+  if (!cmd) return reply(ctx, `Unknown command /${m[1]}. Try /help`);
+  await cmd.run(ctx, m[2] ?? "");
 });
-
-bot.command("model", async (ctx) => {
-  const s = sessions.get(key(ctx));
-  if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
-  const arg = ctx.match?.trim();
-  if (!arg) return reply(ctx, `Current model: ${s.model ?? "default (account)"}
-Usage: /model opus | sonnet | haiku | <full-id>`);
-  s.model = arg;                 // claude accepts aliases (opus/sonnet/haiku) and full ids
-  saveSessions(sessions);
-  await reply(ctx, `Model set to ${arg} (applies to the next message).`);
-});
-
-bot.command("start", (ctx) =>
-  reply(ctx, "CLI-agent bridge.\n/new <agent> <dir> — spawn a session\n/ls — list\n/model <name> — pick model\n/fresh — reset conversation\n/end - remove session\nSend a photo/file to drop it in the agent's cwd; screenshots it makes come back here."),
-);
+// /start is an alias for /help (Telegram sends it on first open)
+bot.command("start", (ctx) => reply(ctx, helpText()));
 
 // One agent turn: busy-guard, live-streamed status message, then send back the answer
 // plus any image files the agent freshly produced in its cwd (F: screenshot round-trip).
@@ -144,6 +222,7 @@ async function runTurn(ctx: any, s: Session, prompt: string) {
 }
 
 bot.on("message:text", async (ctx) => {
+  if (ctx.message.text.startsWith("/")) return; // commands are handled by the router above
   const s = sessions.get(key(ctx));
   if (!s) return reply(ctx, "No session in this chat/topic. /new <agent> <dir>");
   await runTurn(ctx, s, ctx.message.text);
@@ -175,17 +254,11 @@ bot.catch((e) => console.error("bot error:", e.error));
 process.on("unhandledRejection", (e) => { console.error("fatal:", e); process.exit(1); });
 process.on("uncaughtException", (e) => { console.error("fatal:", e); process.exit(1); });
 console.error("bridge up — long polling");
-// Reconcile Telegram's /command menu with the handlers that actually exist above.
-// setMyCommands REPLACES the whole list, so this also purges stale commands (e.g. /status)
-// that were showing "not available". Keep this array in lockstep with bot.command(...).
-const MENU = [
-  { command: "new", description: "spawn a session: /new <agent> [dir]" },
-  { command: "ls", description: "list active sessions" },
-  { command: "model", description: "pick claude model: opus|sonnet|haiku" },
-  { command: "fresh", description: "reset the conversation (keep agent+dir)" },
-  { command: "end", description: "kill this session" },
-  { command: "start", description: "show help" },
-];
+// Telegram's /command menu is DERIVED from the COMMANDS table, so it can never drift
+// from the handlers. setMyCommands REPLACES the whole list, purging any stale commands
+// (e.g. a previous bot's /status) that showed "not available". Telegram caps descriptions
+// at 256 chars and requires lowercase command names, which our table already satisfies.
+const MENU = COMMANDS.map((c) => ({ command: c.name, description: c.menu }));
 
 bot.start({
   onStart: async (me) => {

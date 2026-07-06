@@ -18,5 +18,9 @@ export function loadSessions(): Map<string, Session> {
 
 export function saveSessions(m: Map<string, Session>) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(file, JSON.stringify(Object.fromEntries(m), null, 2));
+  // strip runtime-only fields (proc = a live child process; busy = transient) before persisting
+  const plain = Object.fromEntries(
+    [...m].map(([k, { proc, busy, ...rest }]) => [k, rest]),
+  );
+  writeFileSync(file, JSON.stringify(plain, null, 2));
 }

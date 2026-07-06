@@ -100,7 +100,7 @@ export const agents: Record<string, (msg: string, s: Session, onEvent?: OnEvent)
       return { text: best?.result ?? best?.text ?? "(empty response)", resumeId: best?.session_id ?? s.resumeId };
     }
 
-    const out = await run(cmd, s.dir);
+    const out = await run(cmd, s.dir, s);
     // claude may emit one JSON object or a stream of JSON lines; the result object wins
     let best: any = null;
     for (const line of out.split(/\r?\n/)) {
@@ -118,13 +118,13 @@ export const agents: Record<string, (msg: string, s: Session, onEvent?: OnEvent)
   async opencode(msg, s) {
     // ponytail: opencode keeps its own per-dir continuity via --continue; no id parsing needed
     const cmd = ["opencode", "run", ...(s.resumeId ? ["--continue"] : []), msg];
-    const out = await run(cmd, s.dir);
+    const out = await run(cmd, s.dir, s);
     return { text: out || "(no output)", resumeId: "continue" };
   },
 
   async hermes(msg, s) {
     // ponytail: -z is one-shot; per-topic continuity needs hermes session naming, add if used often
-    const out = await run(["hermes", "-z", msg, "--dev"], s.dir); // --dev = plain stdout; default renderer prints nothing when piped
+    const out = await run(["hermes", "-z", msg, "--dev"], s.dir, s); // --dev = plain stdout; default renderer prints nothing when piped
     return { text: out || "(no output)" };
   },
 
@@ -136,19 +136,19 @@ export const agents: Record<string, (msg: string, s: Session, onEvent?: OnEvent)
     const cmd = s.resumeId
       ? ["codex", "exec", "resume", "--last", "--skip-git-repo-check", msg]
       : ["codex", "exec", "--skip-git-repo-check", msg];
-    const out = await run(cmd, s.dir);
+    const out = await run(cmd, s.dir, s);
     return { text: out || "(no output)", resumeId: "last" };
   },
 
   async agy(msg, s) {
     // --continue resumes the most recent conversation: fine for one agy topic, racy for several
     const cmd = ["agy", "--print", msg, "--dangerously-skip-permissions", ...(s.resumeId ? ["--continue"] : [])];
-    const out = await run(cmd, s.dir);
+    const out = await run(cmd, s.dir, s);
     return { text: out || "(no output)", resumeId: "continue" };
   },
 
   async shell(msg, s) {
-    const out = await run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", msg], s.dir);
+    const out = await run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", msg], s.dir, s);
     return { text: out || "(no output)" };
   },
 };
