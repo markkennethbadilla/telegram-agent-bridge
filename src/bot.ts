@@ -66,8 +66,19 @@ bot.command("fresh", async (ctx) => {
   await reply(ctx, s ? "Conversation reset (same agent/dir)." : "No session here.");
 });
 
+bot.command("model", async (ctx) => {
+  const s = sessions.get(key(ctx));
+  if (!s) return reply(ctx, "No session here. /new <agent> <dir> first.");
+  const arg = ctx.match?.trim();
+  if (!arg) return reply(ctx, `Current model: ${s.model ?? "default (account)"}
+Usage: /model opus | sonnet | haiku | <full-id>`);
+  s.model = arg;                 // claude accepts aliases (opus/sonnet/haiku) and full ids
+  saveSessions(sessions);
+  await reply(ctx, `Model set to ${arg} (applies to the next message).`);
+});
+
 bot.command("start", (ctx) =>
-  reply(ctx, "CLI-agent bridge.\n/new <agent> <dir> — spawn a session\n/ls — list\n/fresh — reset conversation\n/end — remove session"),
+  reply(ctx, "CLI-agent bridge.\n/new <agent> <dir> — spawn a session\n/ls — list\n/model <name> — pick model\n/fresh — reset conversation\n/end — remove session"),
 );
 
 bot.on("message:text", async (ctx) => {

@@ -22,8 +22,21 @@ Set-Content -Path $loopPath -Value $loop -Encoding UTF8
 
 $psExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
 if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
-$action = New-ScheduledTaskAction -Execute $psExe `
-  -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $loopPath)
+
+# Truly-windowless launcher. pwsh -WindowStyle Hidden STILL allocates a console
+# (a killable window Mark closes with his terminals); wscript Run(cmd,0,False) starts
+# the loop with NO console at all. The vbs ships next to the loop in %LOCALAPPDATA%.
+$q = [char]34
+$cmd = "$q$psExe$q -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $q$loopPath$q"
+$cmdEsc = $cmd -replace $q, ($q + $q)   # VBScript: escape " as ""
+$vbs = @"
+Set sh = CreateObject("WScript.Shell")
+sh.Run "$cmdEsc", 0, False
+"@
+$vbsPath = Join-Path (Split-Path $loopPath) 'run-hidden.vbs'
+Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII
+$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" `
+  -Argument ('"{0}"' -f $vbsPath)
 # two triggers: at-logon (boot path) + hourly watchdog (revives a killed loop; the
 # loop script itself is single-instance-safe because Telegram rejects a second poller
 # and bot.ts exits, so a duplicate start converges to one live instance)

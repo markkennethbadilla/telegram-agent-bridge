@@ -7,6 +7,7 @@ export interface Session {
   agent: string;
   dir: string;
   resumeId?: string; // agent-native session/conversation id, if any
+  model?: string;    // /model override; passed to claude --model (alias ok)
   busy: boolean;
 }
 
@@ -43,6 +44,7 @@ async function run(cmd: string[], dir: string): Promise<string> {
 export const agents: Record<string, (msg: string, s: Session) => Promise<RunResult>> = {
   async claude(msg, s) {
     const cmd = ["claude", "-p", "--output-format", "json", "--dangerously-skip-permissions"];
+    if (s.model) cmd.push("--model", s.model);
     if (s.resumeId) cmd.push("--resume", s.resumeId);
     cmd.push(msg);
     const out = await run(cmd, s.dir);
