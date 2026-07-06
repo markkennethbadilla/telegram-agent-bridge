@@ -88,11 +88,28 @@ bot.on("message:text", async (ctx) => {
   s.busy = true;
   const typing = setInterval(() => ctx.replyWithChatAction("typing").catch(() => {}), 5000);
   ctx.replyWithChatAction("typing").catch(() => {});
+  // Live progress: one status message edited in place as tool_use events stream in.
+  const opts = ctx.message?.message_thread_id ? { message_thread_id: ctx.message.message_thread_id } : {};
+  let statusMsg: any = null, steps: string[] = [], lastEdit = 0, pending = false;
+  const flush = async () => {
+    if (!statusMsg || pending) return;
+    pending = true;
+    const body = steps.slice(-12).join("\n") + "\n\n…working";
+    try { await ctx.api.editMessageText(statusMsg.chat.id, statusMsg.message_id, body, opts); } catch {}
+    lastEdit = Date.now(); pending = false;
+  };
+  const onEvent = (label: string) => {
+    steps.push(label);
+    if (Date.now() - lastEdit > 1200) void flush();   // throttle: Telegram ~1 edit/sec
+  };
   try {
-    const r = await agents[s.agent](ctx.message.text, s);
+    statusMsg = await ctx.reply("…working", opts).catch(() => null);
+    const r = await agents[s.agent](ctx.message.text, s, onEvent);
     s.resumeId = r.resumeId ?? s.resumeId;
     saveSessions(sessions);
-    await reply(ctx, r.text.trim() || "(empty response)");
+    const answer = r.text.trim() || "(empty response)";
+    if (statusMsg) { try { await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id); } catch {} }
+    await reply(ctx, answer);
   } catch (e: any) {
     await reply(ctx, `Error: ${e.message}`);
   } finally {
