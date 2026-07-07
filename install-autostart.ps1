@@ -44,14 +44,15 @@ Set-Location '$Here'
 # coexist, so idle loops piled up (each harmlessly losing bot.ts's port lock, but churning).
 # Instead bind a loop-guard TCP port: the OS grants it to exactly one process. Can't bind
 # => another loop already owns it => exit. Same primitive bot.ts uses for its poller lock.
-`$guard = `$null
 try {
   `$guard = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 48764)
   `$guard.ExclusiveAddressUse = `$true
   `$guard.Start()
 } catch { exit 0 }
+# Pin the listener so GC can NEVER finalize it (which would silently release 48764
+# mid-run and let a second loop bind). A GCHandle keeps it rooted for the process life.
+`$pin = [System.Runtime.InteropServices.GCHandle]::Alloc(`$guard)
 while (`$true) {
-  if (-not `$guard.Server.IsBound) { exit 0 }  # guard released => another loop owns it
   & '$bun' src/bot.ts 2>> "$AppDir\bridge.err.log"
   Start-Sleep -Seconds 10
 }
