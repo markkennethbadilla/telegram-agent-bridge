@@ -39,13 +39,19 @@ if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\pow
 # --- layer 1: the crash-restart loop ---
 $loop = @"
 Set-Location '$Here'
-# Single-instance: at-logon + 5-min repetition + watchdog can each launch a loop, and
-# with several loops each retrying bot.ts every 10s the pollers perpetually 409-fight
-# and none survive. A named mutex is atomic; an abandoned one (prior loop crashed) is
-# caught and treated as acquired so we take over. Guarantees exactly one live loop.
-`$mtx = New-Object System.Threading.Mutex(`$false, 'Global\TelegramAgentBridgeLoop')
-try { if (-not `$mtx.WaitOne(0)) { exit 0 } } catch [System.Threading.AbandonedMutexException] { }
+# Single-instance: at-logon + 5-min repetition + watchdog can each launch a loop.
+# A named mutex proved unreliable here - an abandoned-mutex takeover let a second loop
+# coexist, so idle loops piled up (each harmlessly losing bot.ts's port lock, but churning).
+# Instead bind a loop-guard TCP port: the OS grants it to exactly one process. Can't bind
+# => another loop already owns it => exit. Same primitive bot.ts uses for its poller lock.
+`$guard = `$null
+try {
+  `$guard = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 48764)
+  `$guard.ExclusiveAddressUse = `$true
+  `$guard.Start()
+} catch { exit 0 }
 while (`$true) {
+  if (-not `$guard.Server.IsBound) { exit 0 }  # guard released => another loop owns it
   & '$bun' src/bot.ts 2>> "$AppDir\bridge.err.log"
   Start-Sleep -Seconds 10
 }
