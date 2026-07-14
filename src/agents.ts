@@ -183,6 +183,14 @@ export const agents: Record<string, (msg: string, s: Session, onEvent?: OnEvent)
     return { text: out || "(no output)", resumeId: "continue" };
   },
 
+  async grok(msg, s) {
+    // -p/--single = headless single-turn (prints to stdout, exits); -c continues the
+    // most recent session for the cwd — same one-topic-fine/racy-for-several caveat as agy.
+    const cmd = ["grok", "-p", msg, "--always-approve", ...(s.resumeId ? ["-c"] : [])];
+    const out = await run(cmd, s.dir, s);
+    return { text: out || "(no output)", resumeId: "continue" };
+  },
+
   async shell(msg, s) {
     const out = await run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", msg], s.dir, s);
     return { text: out || "(no output)" };
