@@ -28,8 +28,43 @@ function exe(name: string): string {
 
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 10 * 60 * 1000);
 
+// WSL routing (Mark 2026-07-14): the bridge is native-Windows on purpose (phone-driven
+// research/browsing/pwsh needs no WSL), but when a session's working dir is a LINUX path we
+// run the agent turn INSIDE the distro via wsl.exe -- landing in the real ext4 filesystem with
+// the full gated Linux toolchain (rtk, hooks, claude on PATH), never crossing the slow 9P bridge.
+// A dir is "WSL" if it looks like an absolute Linux path (/home/...) or is prefixed "wsl:".
+const WSL_DISTRO = process.env.BRIDGE_WSL_DISTRO || "Ubuntu";
+
+function isWslDir(dir: string): boolean {
+  return dir.startsWith("wsl:") || /^\/(home|mnt|root|usr|opt|srv|tmp|var)\b/.test(dir);
+}
+function wslPath(dir: string): string {
+  return dir.startsWith("wsl:") ? dir.slice(4) : dir;
+}
+
+// Single-quote-safe wrap of an argv into one bash -lic string, so a login shell resolves the
+// gated PATH (rtk/claude/bun) exactly as an interactive WSL agent would.
+function shQuote(a: string): string {
+  return `'${a.replace(/'/g, `'\\''`)}'`;
+}
+
+// Transforms (cmd, dir) into the actual argv + cwd to spawn. Native dirs run native (as before);
+// Linux dirs run through wsl.exe --cd <linux-dir> -- bash -lic "<gated cmd>".
+function resolveSpawn(cmd: string[], dir: string): { argv: string[]; cwd: string } {
+  if (isWslDir(dir)) {
+    const ldir = wslPath(dir);
+    const inner = cmd.map(shQuote).join(" ");
+    return {
+      argv: ["wsl.exe", "-d", WSL_DISTRO, "--cd", ldir, "--", "bash", "-lic", inner],
+      cwd: process.env.USERPROFILE || ".", // wsl.exe itself is launched from a valid Windows cwd
+    };
+  }
+  return { argv: [exe(cmd[0]), ...cmd.slice(1)], cwd: dir };
+}
+
 async function run(cmd: string[], dir: string): Promise<string> {
-  const proc = spawn({ cmd: [exe(cmd[0]), ...cmd.slice(1)], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  const { argv, cwd } = resolveSpawn(cmd, dir);
+  const proc = spawn({ cmd: argv, cwd, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => proc.kill(), TURN_TIMEOUT_MS); // a hung agent must not wedge the session
   proc.exited.finally(() => clearTimeout(timer));
   const [out, err] = await Promise.all([
@@ -46,7 +81,8 @@ export type OnEvent = (line: string) => void;
 // Line-buffered live reader: yields agent stdout lines the instant they arrive so
 // the caller can stream progress, instead of blocking until the process exits.
 async function runStream(cmd: string[], dir: string, onLine: (l: string) => void): Promise<{ code: number; err: string }> {
-  const proc = spawn({ cmd: [exe(cmd[0]), ...cmd.slice(1)], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  const { argv, cwd } = resolveSpawn(cmd, dir);
+  const proc = spawn({ cmd: argv, cwd, stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => proc.kill(), TURN_TIMEOUT_MS);
   proc.exited.finally(() => clearTimeout(timer));
   let buf = "";
