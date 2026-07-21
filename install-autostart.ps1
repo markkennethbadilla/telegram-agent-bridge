@@ -33,8 +33,12 @@ $bun = (Get-Command bun.exe -ErrorAction SilentlyContinue).Source
 if (-not $bun) { $bun = Join-Path $env:USERPROFILE '.bun\bin\bun.exe' }
 if (-not (Test-Path $bun)) { throw 'bun.exe not found' }
 
-$psExe = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
-if (-not $psExe) { $psExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" }
+# NOTE: we deliberately do NOT bake an absolute pwsh path into the VBS.
+# (Get-Command pwsh.exe).Source resolves the App Execution Alias to its CURRENT
+# versioned target (...\Microsoft.PowerShell_7.6.3.0_x64...\pwsh.exe). Baking that in
+# froze the version - when PowerShell auto-updated to 7.6.4.0 the old folder was
+# removed and the VBS died with 80070003 "cannot find the path". Instead the VBS
+# resolves pwsh at RUNTIME (below), so it survives every PowerShell update.
 
 # --- layer 1: the crash-restart loop ---
 $loop = @"
@@ -62,13 +66,31 @@ Set-Content -Path $loopPath -Value $loop -Encoding UTF8
 
 # Truly-windowless launcher. pwsh -WindowStyle Hidden STILL allocates a killable console;
 # wscript Run(cmd,0,False) starts the loop with NO console at all.
-$q = [char]34
-$cmd = "$q$psExe$q -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $q$loopPath$q"
-$cmdEsc = $cmd -replace $q, ($q + $q)   # VBScript escapes " as ""
-$vbs = @"
+# The VBS resolves pwsh at RUNTIME via ResolvePwsh() (defined once, reused by both
+# launchers) so a PowerShell version bump never strands it. Only the target .ps1 path
+# differs between the two launchers.
+function New-HiddenLauncherVbs([string]$ScriptPath) {
+  $q = [char]34
+  $spEsc = $ScriptPath -replace $q, ($q + $q)
+  @"
 Set sh = CreateObject("WScript.Shell")
-sh.Run "$cmdEsc", 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+Function ResolvePwsh()
+  Dim env, c
+  Set env = sh.Environment("Process")
+  ' 1) App Execution Alias - the OS re-points this on every PowerShell update.
+  c = env("LOCALAPPDATA") & "\Microsoft\WindowsApps\pwsh.exe"
+  If fso.FileExists(c) Then ResolvePwsh = c : Exit Function
+  ' 2) winget/MSI per-machine install location.
+  c = env("ProgramFiles") & "\PowerShell\7\pwsh.exe"
+  If fso.FileExists(c) Then ResolvePwsh = c : Exit Function
+  ' 3) last resort: Windows PowerShell 5.1 (always present).
+  ResolvePwsh = env("SystemRoot") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+End Function
+sh.Run """" & ResolvePwsh() & """ -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""$spEsc""", 0, False
 "@
+}
+$vbs = New-HiddenLauncherVbs $loopPath
 $vbsPath = Join-Path $AppDir 'run-hidden.vbs'
 Set-Content -Path $vbsPath -Value $vbs -Encoding ASCII
 
@@ -83,12 +105,8 @@ Set-Content -Path $watchPath -Value $watch -Encoding UTF8
 
 # Windowless launcher for the watchdog (pwsh -WindowStyle Hidden STILL flashes a
 # console every 5 min; wscript Run(cmd,0,False) gives it no console at all).
-$watchCmd = "$q$psExe$q -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $q$watchPath$q"
-$watchCmdEsc = $watchCmd -replace $q, ($q + $q)
-$watchVbs = @"
-Set sh = CreateObject("WScript.Shell")
-sh.Run "$watchCmdEsc", 0, False
-"@
+# Same runtime-resolving launcher as the main loop, pointed at watchdog.ps1.
+$watchVbs = New-HiddenLauncherVbs $watchPath
 $watchVbsPath = Join-Path $AppDir 'watchdog-hidden.vbs'
 Set-Content -Path $watchVbsPath -Value $watchVbs -Encoding ASCII
 
